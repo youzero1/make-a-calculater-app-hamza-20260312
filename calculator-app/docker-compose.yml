@@ -7,21 +7,14 @@ services:
       dockerfile: Dockerfile
     container_name: calculator-app
     ports:
-      - '3000:3000'
+      - "3000:3000"
     environment:
       - NODE_ENV=production
-      - DATABASE_PATH=/app/data/calculator.db
-      - NEXT_PUBLIC_APP_TITLE=Calculator
+      - DATABASE_PATH=/app/data/database.sqlite
     volumes:
-      - calculator-data:/app/data
+      - calculator-db:/app/data
     restart: unless-stopped
-    healthcheck:
-      test: ['CMD-SHELL', 'wget --no-verbose --tries=1 --spider http://localhost:3000 || exit 1']
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
 
 volumes:
-  calculator-data:
+  calculator-db:
     driver: local

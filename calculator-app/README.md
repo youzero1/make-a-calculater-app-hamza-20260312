@@ -1,52 +1,49 @@
-# Calculator App
+# Green Calculator App
 
-A fullstack calculator application built with Next.js, TypeScript, and SQLite. Features a red-themed UI design.
+A fullstack calculator built with Next.js, TypeScript, TypeORM, and SQLite — featuring a green-themed UI.
 
 ## Features
 
-- Basic arithmetic operations: +, -, ×, ÷
-- Calculation history stored in SQLite database
-- Red-themed responsive UI
-- REST API for history management
+- 🟢 Green-themed responsive UI
+- ✅ Full arithmetic operations: +, −, ×, ÷
+- 🗄️ Calculation history stored in SQLite via TypeORM
+- 📜 Toggleable history panel
+- 🐳 Docker & Docker Compose support
 
-## Tech Stack
-
-- **Frontend**: Next.js 14, React 18, TypeScript
-- **Backend**: Next.js API Routes
-- **Database**: SQLite via TypeORM + better-sqlite3
-- **Container**: Docker + Docker Compose
-
-## Getting Started
-
-### Local Development
+## Local Development
 
 ```bash
 cd calculator-app
 npm i
-mkdir -p data
 npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000)
 
-### Docker
+## Docker Deployment
 
 ```bash
-cd calculator-app
 docker-compose up --build
 ```
 
-Open [http://localhost:3000](http://localhost:3000)
-
 ## API Endpoints
 
-- `GET /api/history` — Retrieve past calculations
-- `POST /api/history` — Save a new calculation
-  - Body: `{ expression: string, result: string }`
+| Method | Endpoint             | Description                    |
+|--------|----------------------|--------------------------------|
+| GET    | /api/calculations    | Get last 50 calculations       |
+| POST   | /api/calculations    | Save a new calculation         |
 
-## Environment Variables
+### POST Body
+```json
+{
+  "expression": "5 + 3",
+  "result": "8"
+}
+```
 
-| Variable | Default | Description |
-|---|---|---|
-| `DATABASE_PATH` | `./data/calculator.db` | Path to SQLite database file |
-| `NEXT_PUBLIC_APP_TITLE` | `Calculator` | App title displayed in UI |
+## Tech Stack
+
+- **Frontend**: Next.js 14, React 18, TypeScript, CSS Modules
+- **Backend**: Next.js API Routes
+- **Database**: SQLite + TypeORM + better-sqlite3
+- **Deployment**: Docker, Docker Compose

@@ -1,40 +1,46 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import Display from './Display';
 import Button from './Button';
-import History from './History';
+import styles from './Calculator.module.css';
 
-type ButtonConfig = {
+interface HistoryItem {
+  id: number;
+  expression: string;
+  result: string;
+  createdAt: string;
+}
+
+type ButtonVariant = 'default' | 'operator' | 'equals' | 'clear' | 'backspace' | 'zero';
+
+interface ButtonConfig {
   label: string;
-  variant: 'number' | 'operator' | 'action' | 'equals' | 'zero';
-  span?: number;
+  variant: ButtonVariant;
+  wide?: boolean;
   action: () => void;
-};
+}
 
 export default function Calculator() {
-  const [current, setCurrent] = useState('0');
-  const [expression, setExpression] = useState('');
-  const [operator, setOperator] = useState<string | null>(null);
-  const [prevValue, setPrevValue] = useState<string | null>(null);
-  const [waitingForOperand, setWaitingForOperand] = useState(false);
-  const [justCalculated, setJustCalculated] = useState(false);
-  const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [current, setCurrent] = useState<string>('0');
+  const [expression, setExpression] = useState<string>('');
+  const [waitingForOperand, setWaitingForOperand] = useState<boolean>(false);
+  const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [showHistory, setShowHistory] = useState<boolean>(false);
+  const [loadingHistory, setLoadingHistory] = useState<boolean>(false);
 
   const inputDigit = useCallback((digit: string) => {
     if (waitingForOperand) {
       setCurrent(digit);
       setWaitingForOperand(false);
     } else {
-      if (justCalculated) {
-        setCurrent(digit);
-        setExpression('');
-        setJustCalculated(false);
-      } else {
-        setCurrent(current === '0' ? digit : current + digit);
-      }
+      setCurrent(prev => {
+        if (prev === '0') return digit;
+        if (prev.length >= 15) return prev;
+        return prev + digit;
+      });
     }
-  }, [current, waitingForOperand, justCalculated]);
+  }, [waitingForOperand]);
 
   const inputDecimal = useCallback(() => {
     if (waitingForOperand) {
@@ -43,165 +49,203 @@ export default function Calculator() {
       return;
     }
     if (!current.includes('.')) {
-      setCurrent(current + '.');
+      setCurrent(prev => prev + '.');
     }
-    setJustCalculated(false);
   }, [current, waitingForOperand]);
-
-  const handleOperator = useCallback((op: string) => {
-    const currentVal = parseFloat(current);
-
-    if (prevValue !== null && !waitingForOperand && !justCalculated) {
-      const prev = parseFloat(prevValue);
-      let result: number;
-      switch (operator) {
-        case '+': result = prev + currentVal; break;
-        case '-': result = prev - currentVal; break;
-        case '×': result = prev * currentVal; break;
-        case '÷': result = currentVal !== 0 ? prev / currentVal : NaN; break;
-        default: result = currentVal;
-      }
-      const resultStr = isNaN(result) ? 'Error' : String(parseFloat(result.toPrecision(12)));
-      setCurrent(resultStr);
-      setPrevValue(resultStr);
-      setExpression(`${resultStr} ${op}`);
-    } else {
-      setPrevValue(current);
-      setExpression(`${current} ${op}`);
-    }
-
-    setOperator(op);
-    setWaitingForOperand(true);
-    setJustCalculated(false);
-  }, [current, prevValue, operator, waitingForOperand, justCalculated]);
-
-  const calculate = useCallback(async () => {
-    if (operator === null || prevValue === null) return;
-
-    const prev = parseFloat(prevValue);
-    const curr = parseFloat(current);
-    let result: number;
-
-    switch (operator) {
-      case '+': result = prev + curr; break;
-      case '-': result = prev - curr; break;
-      case '×': result = prev * curr; break;
-      case '÷': result = curr !== 0 ? prev / curr : NaN; break;
-      default: return;
-    }
-
-    const resultStr = isNaN(result) ? 'Error' : String(parseFloat(result.toPrecision(12)));
-    const expr = `${prevValue} ${operator} ${current}`;
-
-    setExpression(`${expr} =`);
-    setCurrent(resultStr);
-    setPrevValue(null);
-    setOperator(null);
-    setWaitingForOperand(false);
-    setJustCalculated(true);
-
-    if (resultStr !== 'Error') {
-      try {
-        await fetch('/api/history', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ expression: expr, result: resultStr }),
-        });
-        setRefreshTrigger(t => t + 1);
-      } catch (err) {
-        console.error('Failed to save calculation:', err);
-      }
-    }
-  }, [current, prevValue, operator]);
 
   const clear = useCallback(() => {
     setCurrent('0');
     setExpression('');
-    setOperator(null);
-    setPrevValue(null);
     setWaitingForOperand(false);
-    setJustCalculated(false);
   }, []);
 
-  const toggleSign = useCallback(() => {
-    setCurrent(String(parseFloat(current) * -1));
-    setJustCalculated(false);
-  }, [current]);
-
-  const percentage = useCallback(() => {
-    setCurrent(String(parseFloat(current) / 100));
-    setJustCalculated(false);
-  }, [current]);
-
   const backspace = useCallback(() => {
-    if (justCalculated || current === '0') {
-      setCurrent('0');
-      return;
+    if (waitingForOperand) return;
+    setCurrent(prev => {
+      if (prev.length <= 1) return '0';
+      return prev.slice(0, -1);
+    });
+  }, [waitingForOperand]);
+
+  const handleOperator = useCallback((op: string) => {
+    const currentVal = parseFloat(current);
+    let displayOp = op;
+    if (op === '*') displayOp = '×';
+    if (op === '/') displayOp = '÷';
+
+    // If there is already a pending expression and not waiting, evaluate first
+    if (expression && !waitingForOperand) {
+      // evaluate current expression
+      const fullExpr = expression + ' ' + current;
+      try {
+        const evalExpr = expression.replace(/×/g, '*').replace(/÷/g, '/');
+        // eslint-disable-next-line no-new-func
+        const result = Function('"use strict"; return (' + evalExpr + ' ' + current + ')')();
+        const resultStr = formatResult(result);
+        setCurrent(resultStr);
+        setExpression(resultStr + ' ' + displayOp);
+        setWaitingForOperand(true);
+        return;
+      } catch {
+        // ignore eval errors
+      }
     }
-    const newVal = current.length > 1 ? current.slice(0, -1) : '0';
-    setCurrent(newVal);
-  }, [current, justCalculated]);
+
+    setExpression(current + ' ' + displayOp);
+    setWaitingForOperand(true);
+  }, [current, expression, waitingForOperand]);
+
+  const formatResult = (value: number): string => {
+    if (!isFinite(value)) return 'Error';
+    if (isNaN(value)) return 'Error';
+    // Limit to reasonable precision
+    const str = parseFloat(value.toPrecision(12)).toString();
+    return str;
+  };
+
+  const calculate = useCallback(async () => {
+    if (!expression) return;
+
+    const fullExpression = expression + ' ' + current;
+    const evalExpression = fullExpression.replace(/×/g, '*').replace(/÷/g, '/');
+
+    let result: string;
+    try {
+      if (evalExpression.includes('/ 0') || evalExpression.includes('/0')) {
+        const parts = evalExpression.split('/');
+        const divisor = parts[parts.length - 1].trim();
+        if (parseFloat(divisor) === 0) {
+          result = 'Error: Div/0';
+        } else {
+          // eslint-disable-next-line no-new-func
+          const res = Function('"use strict"; return (' + evalExpression + ')')();
+          result = formatResult(res);
+        }
+      } else {
+        // eslint-disable-next-line no-new-func
+        const res = Function('"use strict"; return (' + evalExpression + ')')();
+        result = formatResult(res);
+      }
+    } catch {
+      result = 'Error';
+    }
+
+    setCurrent(result);
+    setExpression(fullExpression + ' =');
+    setWaitingForOperand(true);
+
+    // Save to DB
+    if (result !== 'Error' && result !== 'Error: Div/0') {
+      try {
+        const response = await fetch('/api/calculations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ expression: fullExpression, result }),
+        });
+        if (response.ok) {
+          const data = await response.json();
+          if (showHistory) {
+            setHistory(prev => [data.calculation, ...prev]);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to save calculation:', err);
+      }
+    }
+  }, [current, expression, showHistory]);
+
+  const loadHistory = useCallback(async () => {
+    setLoadingHistory(true);
+    try {
+      const res = await fetch('/api/calculations');
+      const data = await res.json();
+      setHistory(data.calculations || []);
+    } catch (err) {
+      console.error('Failed to load history:', err);
+    } finally {
+      setLoadingHistory(false);
+    }
+  }, []);
+
+  const toggleHistory = useCallback(() => {
+    if (!showHistory) {
+      loadHistory();
+    }
+    setShowHistory(prev => !prev);
+  }, [showHistory, loadHistory]);
 
   const buttons: ButtonConfig[] = [
-    { label: 'C', variant: 'action', action: clear },
-    { label: '+/-', variant: 'action', action: toggleSign },
-    { label: '%', variant: 'action', action: percentage },
-    { label: '÷', variant: 'operator', action: () => handleOperator('÷') },
-
-    { label: '7', variant: 'number', action: () => inputDigit('7') },
-    { label: '8', variant: 'number', action: () => inputDigit('8') },
-    { label: '9', variant: 'number', action: () => inputDigit('9') },
-    { label: '×', variant: 'operator', action: () => handleOperator('×') },
-
-    { label: '4', variant: 'number', action: () => inputDigit('4') },
-    { label: '5', variant: 'number', action: () => inputDigit('5') },
-    { label: '6', variant: 'number', action: () => inputDigit('6') },
-    { label: '-', variant: 'operator', action: () => handleOperator('-') },
-
-    { label: '1', variant: 'number', action: () => inputDigit('1') },
-    { label: '2', variant: 'number', action: () => inputDigit('2') },
-    { label: '3', variant: 'number', action: () => inputDigit('3') },
+    { label: 'C', variant: 'clear', action: clear },
+    { label: '⌫', variant: 'backspace', action: backspace },
+    { label: '%', variant: 'operator', action: () => {
+      const val = parseFloat(current) / 100;
+      setCurrent(formatResult(val));
+    }},
+    { label: '÷', variant: 'operator', action: () => handleOperator('/') },
+    { label: '7', variant: 'default', action: () => inputDigit('7') },
+    { label: '8', variant: 'default', action: () => inputDigit('8') },
+    { label: '9', variant: 'default', action: () => inputDigit('9') },
+    { label: '×', variant: 'operator', action: () => handleOperator('*') },
+    { label: '4', variant: 'default', action: () => inputDigit('4') },
+    { label: '5', variant: 'default', action: () => inputDigit('5') },
+    { label: '6', variant: 'default', action: () => inputDigit('6') },
+    { label: '−', variant: 'operator', action: () => handleOperator('-') },
+    { label: '1', variant: 'default', action: () => inputDigit('1') },
+    { label: '2', variant: 'default', action: () => inputDigit('2') },
+    { label: '3', variant: 'default', action: () => inputDigit('3') },
     { label: '+', variant: 'operator', action: () => handleOperator('+') },
-
-    { label: '⌫', variant: 'action', action: backspace },
-    { label: '0', variant: 'number', action: () => inputDigit('0') },
-    { label: '.', variant: 'number', action: inputDecimal },
+    { label: '0', variant: 'zero', wide: true, action: () => inputDigit('0') },
+    { label: '.', variant: 'default', action: inputDecimal },
     { label: '=', variant: 'equals', action: calculate },
   ];
 
   return (
-    <div
-      style={{
-        width: '100%',
-        maxWidth: '360px',
-        background: 'linear-gradient(160deg, #3d0000 0%, #2d0000 100%)',
-        borderRadius: '20px',
-        padding: '20px',
-        boxShadow: '0 20px 60px rgba(0,0,0,0.6), 0 0 40px rgba(183, 28, 28, 0.2)',
-        border: '1px solid rgba(127, 0, 0, 0.5)',
-      }}
-    >
-      <Display expression={expression} current={current} />
+    <div className={styles.wrapper}>
+      <div className={styles.calculator}>
+        <div className={styles.header}>
+          <h1 className={styles.title}>Calculator</h1>
+          <button className={styles.historyToggle} onClick={toggleHistory}>
+            {showHistory ? 'Hide History' : 'History'}
+          </button>
+        </div>
 
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(4, 1fr)',
-          gap: '10px',
-        }}
-      >
-        {buttons.map((btn, index) => (
-          <Button
-            key={index}
-            label={btn.label}
-            onClick={btn.action}
-            variant={btn.variant}
-            span={btn.span}
-          />
-        ))}
+        <Display expression={expression} current={current} />
+
+        <div className={styles.grid}>
+          {buttons.map((btn, i) => (
+            <Button
+              key={i}
+              label={btn.label}
+              onClick={btn.action}
+              variant={btn.variant}
+              wide={btn.wide}
+            />
+          ))}
+        </div>
       </div>
 
-      <History refreshTrigger={refreshTrigger} />
+      {showHistory && (
+        <div className={styles.historyPanel}>
+          <h2 className={styles.historyTitle}>Calculation History</h2>
+          {loadingHistory ? (
+            <p className={styles.historyLoading}>Loading...</p>
+          ) : history.length === 0 ? (
+            <p className={styles.historyEmpty}>No calculations yet.</p>
+          ) : (
+            <ul className={styles.historyList}>
+              {history.map(item => (
+                <li key={item.id} className={styles.historyItem}>
+                  <span className={styles.historyExpr}>{item.expression}</span>
+                  <span className={styles.historyResult}>= {item.result}</span>
+                  <span className={styles.historyDate}>
+                    {new Date(item.createdAt).toLocaleString()}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
     </div>
   );
 }

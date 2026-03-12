@@ -2,8 +2,8 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: process.env.NEXT_PUBLIC_APP_TITLE || 'Calculator',
-  description: 'A red-themed calculator app built with Next.js',
+  title: 'Green Calculator',
+  description: 'A fullstack calculator with green theme',
 };
 
 export default function RootLayout({

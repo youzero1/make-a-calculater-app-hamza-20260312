@@ -1,0 +1,41 @@
+.display {
+  background: linear-gradient(180deg, #1b5e20 0%, #2e7d32 100%);
+  border-radius: 12px 12px 0 0;
+  padding: 20px 16px 12px;
+  text-align: right;
+  min-height: 100px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  overflow: hidden;
+  border-bottom: 2px solid #4caf50;
+}
+
+.expression {
+  color: #a5d6a7;
+  font-size: 0.85rem;
+  min-height: 1.2em;
+  word-break: break-all;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-bottom: 4px;
+  opacity: 0.8;
+}
+
+.current {
+  color: #ffffff;
+  font-size: 2.2rem;
+  font-weight: 700;
+  word-break: break-all;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+}
+
+@media (max-width: 400px) {
+  .current {
+    font-size: 1.8rem;
+  }
+}
