@@ -1,0 +1,706 @@
+null) {
+      return NextResponse.json(
+        { error: 'expression and result are required' },
+        { status: 400 }
+      );
+    }
+
+    const dataSource = await getDataSource();
+    const repo = dataSource.getRepository(Calculation);
+
+    const calc = repo.create({
+      expression: String(expression),
+      result: String(result),
+    });
+
+    await repo.save(calc);
+
+    return NextResponse.json({ calculation: calc }, { status: 201 });
+  } catch (error) {
+    console.error('POST /api/calculations error:', error);
+    return NextResponse.json(
+      { error: 'Failed to save calculation' },
+      { status: 500 }
+    );
+  }
+}
+</file>
+
+<file path="calculator-app/src/app/api/history/route.ts">
+import 'reflect-metadata';
+import { NextRequest, NextResponse } from 'next/server';
+import { getDataSource } from '@/lib/dataSource';
+import { Calculation } from '@/entity/Calculation';
+
+export async function GET() {
+  try {
+    const ds = await getDataSource();
+    const repo = ds.getRepository(Calculation);
+    const calculations = await repo.find({
+      order: { createdAt: 'DESC' },
+      take: 50,
+    });
+    return NextResponse.json(calculations);
+  } catch (error) {
+    console.error('GET /api/history error:', error);
+    return NextResponse.json({ error: 'Failed to fetch history' }, { status: 500 });
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { expression, result } = body;
+
+    if (!expression || result === undefined) {
+      return NextResponse.json({ error: 'Expression and result are required' }, { status: 400 });
+    }
+
+    const ds = await getDataSource();
+    const repo = ds.getRepository(Calculation);
+
+    const calculation = repo.create({
+      expression: String(expression),
+      result: String(result),
+    });
+
+    await repo.save(calculation);
+    return NextResponse.json(calculation, { status: 201 });
+  } catch (error) {
+    console.error('POST /api/history error:', error);
+    return NextResponse.json({ error: 'Failed to save calculation' }, { status: 500 });
+  }
+}
+</file>
+
+<file path="calculator-app/src/app/globals.css">
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --green-darkest: #1b5e20;
+  --green-dark: #2e7d32;
+  --green-mid: #388e3c;
+  --green-primary: #4caf50;
+  --green-light: #a5d6a7;
+  --green-lightest: #e8f5e9;
+  --green-accent: #66bb6a;
+  --white: #ffffff;
+  --text-dark: #1b5e20;
+  --text-light: #ffffff;
+  --shadow: rgba(27, 94, 32, 0.3);
+}
+
+html, body {
+  height: 100%;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background: linear-gradient(135deg, var(--green-darkest) 0%, var(--green-mid) 50%, var(--green-primary) 100%);
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  scrollbar-width: thin;
+}
+
+#__next {
+  width: 100%;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+main {
+  width: 100%;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  padding: 20px;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--green-lightest);
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--green-primary);
+  border-radius: 3px;
+}
+</file>
+
+<file path="calculator-app/src/components/Display.tsx">
+'use client';
+
+import React from 'react';
+import styles from './Display.module.css';
+
+interface DisplayProps {
+  expression: string;
+  current: string;
+}
+
+export default function Display({ expression, current }: DisplayProps) {
+  return (
+    <div className={styles.display}>
+      <div className={styles.expression}>{expression || '\u00A0'}</div>
+      <div className={styles.current}>{current}</div>
+    </div>
+  );
+}
+</file>
+
+<file path="calculator-app/src/components/History.tsx">
+'use client';
+
+import React from 'react';
+
+interface HistoryEntry {
+  id: number;
+  expression: string;
+  result: string;
+  createdAt: string;
+}
+
+interface HistoryProps {
+  items: HistoryEntry[];
+  loading: boolean;
+}
+
+export default function History({ items, loading }: HistoryProps) {
+  if (loading) {
+    return <p>Loading history...</p>;
+  }
+
+  if (items.length === 0) {
+    return <p>No calculations yet.</p>;
+  }
+
+  return (
+    <ul>
+      {items.map((item) => (
+        <li key={item.id}>
+          <span>{item.expression}</span>
+          <span> = {item.result}</span>
+          <span> ({new Date(item.createdAt).toLocaleString()})</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+</file>
+
+<file path="calculator-app/src/components/Calculator.tsx">
+'use client';
+
+import React, { useState, useCallback } from 'react';
+import Display from './Display';
+import Button from './Button';
+import styles from './Calculator.module.css';
+
+interface HistoryItem {
+  id: number;
+  expression: string;
+  result: string;
+  createdAt: string;
+}
+
+type ButtonVariant = 'default' | 'operator' | 'equals' | 'clear' | 'backspace' | 'zero';
+
+interface ButtonConfig {
+  label: string;
+  variant: ButtonVariant;
+  wide?: boolean;
+  action: () => void;
+}
+
+function formatResult(value: number): string {
+  if (!isFinite(value)) return 'Error';
+  if (isNaN(value)) return 'Error';
+  const str = parseFloat(value.toPrecision(12)).toString();
+  return str;
+}
+
+/**
+ * Safely evaluate a math expression string.
+ * Only allows numbers, operators (+, -, *, /), parentheses, dots, and spaces.
+ */
+function safeEval(expr: string): number {
+  // Validate expression contains only safe characters
+  if (!/^[\d+\-*/().\s]+$/.test(expr)) {
+    throw new Error('Invalid expression');
+  }
+  // eslint-disable-next-line no-new-func
+  return Function('"use strict"; return (' + expr + ')')() as number;
+}
+
+export default function Calculator() {
+  const [current, setCurrent] = useState<string>('0');
+  const [expression, setExpression] = useState<string>('');
+  const [waitingForOperand, setWaitingForOperand] = useState<boolean>(false);
+  const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [showHistory, setShowHistory] = useState<boolean>(false);
+  const [loadingHistory, setLoadingHistory] = useState<boolean>(false);
+
+  const inputDigit = useCallback((digit: string) => {
+    if (waitingForOperand) {
+      setCurrent(digit);
+      setWaitingForOperand(false);
+    } else {
+      setCurrent(prev => {
+        if (prev === '0') return digit;
+        if (prev.length >= 15) return prev;
+        return prev + digit;
+      });
+    }
+  }, [waitingForOperand]);
+
+  const inputDecimal = useCallback(() => {
+    if (waitingForOperand) {
+      setCurrent('0.');
+      setWaitingForOperand(false);
+      return;
+    }
+    if (!current.includes('.')) {
+      setCurrent(prev => prev + '.');
+    }
+  }, [current, waitingForOperand]);
+
+  const clear = useCallback(() => {
+    setCurrent('0');
+    setExpression('');
+    setWaitingForOperand(false);
+  }, []);
+
+  const backspace = useCallback(() => {
+    if (waitingForOperand) return;
+    setCurrent(prev => {
+      if (prev.length <= 1) return '0';
+      return prev.slice(0, -1);
+    });
+  }, [waitingForOperand]);
+
+  const handleOperator = useCallback((op: string) => {
+    let displayOp = op;
+    if (op === '*') displayOp = '×';
+    if (op === '/') displayOp = '÷';
+
+    if (expression && !waitingForOperand) {
+      const evalExpr = expression.replace(/×/g, '*').replace(/÷/g, '/') + ' ' + current;
+      try {
+        const result = safeEval(evalExpr);
+        const resultStr = formatResult(result);
+        setCurrent(resultStr);
+        setExpression(resultStr + ' ' + displayOp);
+        setWaitingForOperand(true);
+        return;
+      } catch {
+        // ignore eval errors, just set new expression
+      }
+    }
+
+    setExpression(current + ' ' + displayOp);
+    setWaitingForOperand(true);
+  }, [current, expression, waitingForOperand]);
+
+  const calculate = useCallback(async () => {
+    if (!expression) return;
+
+    const fullExpression = expression + ' ' + current;
+    const evalExpression = fullExpression.replace(/×/g, '*').replace(/÷/g, '/');
+
+    let result: string;
+    try {
+      // Check for division by zero
+      const divByZeroMatch = evalExpression.match(/\/\s*0(?:\s|$)/);
+      if (divByZeroMatch) {
+        const parts = evalExpression.split('/');
+        const divisor = parts[parts.length - 1].trim();
+        if (parseFloat(divisor) === 0) {
+          result = 'Error: Div/0';
+        } else {
+          const res = safeEval(evalExpression);
+          result = formatResult(res);
+        }
+      } else {
+        const res = safeEval(evalExpression);
+        result = formatResult(res);
+      }
+    } catch {
+      result = 'Error';
+    }
+
+    setCurrent(result);
+    setExpression(fullExpression + ' =');
+    setWaitingForOperand(true);
+
+    // Save to DB
+    if (result !== 'Error' && result !== 'Error: Div/0') {
+      try {
+        const response = await fetch('/api/calculations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ expression: fullExpression, result }),
+        });
+        if (response.ok) {
+          const data = await response.json();
+          if (showHistory) {
+            setHistory(prev => [data.calculation, ...prev]);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to save calculation:', err);
+      }
+    }
+  }, [current, expression, showHistory]);
+
+  const loadHistory = useCallback(async () => {
+    setLoadingHistory(true);
+    try {
+      const res = await fetch('/api/calculations');
+      const data = await res.json();
+      setHistory(data.calculations || []);
+    } catch (err) {
+      console.error('Failed to load history:', err);
+    } finally {
+      setLoadingHistory(false);
+    }
+  }, []);
+
+  const toggleHistory = useCallback(() => {
+    if (!showHistory) {
+      loadHistory();
+    }
+    setShowHistory(prev => !prev);
+  }, [showHistory, loadHistory]);
+
+  const handlePercent = useCallback(() => {
+    const val = parseFloat(current) / 100;
+    setCurrent(formatResult(val));
+  }, [current]);
+
+  const buttons: ButtonConfig[] = [
+    { label: 'C', variant: 'clear', action: clear },
+    { label: '⌫', variant: 'backspace', action: backspace },
+    { label: '%', variant: 'operator', action: handlePercent },
+    { label: '÷', variant: 'operator', action: () => handleOperator('/') },
+    { label: '7', variant: 'default', action: () => inputDigit('7') },
+    { label: '8', variant: 'default', action: () => inputDigit('8') },
+    { label: '9', variant: 'default', action: () => inputDigit('9') },
+    { label: '×', variant: 'operator', action: () => handleOperator('*') },
+    { label: '4', variant: 'default', action: () => inputDigit('4') },
+    { label: '5', variant: 'default', action: () => inputDigit('5') },
+    { label: '6', variant: 'default', action: () => inputDigit('6') },
+    { label: '−', variant: 'operator', action: () => handleOperator('-') },
+    { label: '1', variant: 'default', action: () => inputDigit('1') },
+    { label: '2', variant: 'default', action: () => inputDigit('2') },
+    { label: '3', variant: 'default', action: () => inputDigit('3') },
+    { label: '+', variant: 'operator', action: () => handleOperator('+') },
+    { label: '0', variant: 'zero', wide: true, action: () => inputDigit('0') },
+    { label: '.', variant: 'default', action: inputDecimal },
+    { label: '=', variant: 'equals', action: calculate },
+  ];
+
+  return (
+    <div className={styles.wrapper}>
+      <div className={styles.calculator}>
+        <div className={styles.header}>
+          <h1 className={styles.title}>Calculator</h1>
+          <button className={styles.historyToggle} onClick={toggleHistory}>
+            {showHistory ? 'Hide History' : 'History'}
+          </button>
+        </div>
+
+        <Display expression={expression} current={current} />
+
+        <div className={styles.grid}>
+          {buttons.map((btn, i) => (
+            <Button
+              key={i}
+              label={btn.label}
+              onClick={btn.action}
+              variant={btn.variant}
+              wide={btn.wide}
+            />
+          ))}
+        </div>
+      </div>
+
+      {showHistory && (
+        <div className={styles.historyPanel}>
+          <h2 className={styles.historyTitle}>Calculation History</h2>
+          {loadingHistory ? (
+            <p className={styles.historyLoading}>Loading...</p>
+          ) : history.length === 0 ? (
+            <p className={styles.historyEmpty}>No calculations yet.</p>
+          ) : (
+            <ul className={styles.historyList}>
+              {history.map(item => (
+                <li key={item.id} className={styles.historyItem}>
+                  <span className={styles.historyExpr}>{item.expression}</span>
+                  <span className={styles.historyResult}>= {item.result}</span>
+                  <span className={styles.historyDate}>
+                    {new Date(item.createdAt).toLocaleString()}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+</file>
+
+<file path="calculator-app/next.config.js">
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  webpack: (config, { isServer }) => {
+    if (isServer) {
+      config.externals = config.externals || [];
+      config.externals.push('better-sqlite3');
+    }
+    return config;
+  },
+  serverExternalPackages: ['typeorm', 'better-sqlite3', 'reflect-metadata'],
+};
+
+module.exports = nextConfig;
+</file>
+
+<file path="calculator-app/tsconfig.json">
+{
+  "compilerOptions": {
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "incremental": true,
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+  "exclude": ["node_modules"]
+}
+</file>
+
+<file path="calculator-app/Dockerfile">
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Install build dependencies for better-sqlite3
+RUN apk add --no-cache python3 make g++ sqlite
+
+COPY package.json ./
+
+RUN npm i
+
+COPY . .
+
+# Create data directory for SQLite database
+RUN mkdir -p /app/data
+
+RUN npm run build
+
+EXPOSE 3000
+
+CMD ["npm", "start"]
+</file>
+
+<file path="calculator-app/src/lib/calculatorUtils.ts">
+/**
+ * Pure utility functions for the calculator logic.
+ * Extracted for testability.
+ */
+
+/**
+ * Format a numeric result to a display string.
+ * Returns 'Error' for non-finite or NaN values.
+ */
+export function formatResult(value: number): string {
+  if (!isFinite(value)) return 'Error';
+  if (isNaN(value)) return 'Error';
+  const str = parseFloat(value.toPrecision(12)).toString();
+  return str;
+}
+
+/**
+ * Safely evaluate a math expression string.
+ * Only allows numbers, operators (+, -, *, /), parentheses, dots, and spaces.
+ * Throws if the expression contains invalid characters.
+ */
+export function safeEval(expr: string): number {
+  if (!/^[\d+\-*/().\s]+$/.test(expr)) {
+    throw new Error('Invalid expression: contains disallowed characters');
+  }
+  // eslint-disable-next-line no-new-func
+  return Function('"use strict"; return (' + expr + ')')() as number;
+}
+
+/**
+ * Convert a display expression (with × and ÷) to an eval-safe expression (with * and /).
+ */
+export function toEvalExpression(displayExpr: string): string {
+  return displayExpr.replace(/×/g, '*').replace(/÷/g, '/');
+}
+
+/**
+ * Get the display symbol for a math operator.
+ */
+export function getDisplayOperator(op: string): string {
+  if (op === '*') return '×';
+  if (op === '/') return '÷';
+  return op;
+}
+
+/**
+ * Check if an expression involves division by zero.
+ */
+export function isDivisionByZero(evalExpr: string): boolean {
+  // Match / followed by optional spaces and a 0 that's at end or followed by space/non-digit
+  const match = evalExpr.match(/\/\s*(\d+\.?\d*)/g);
+  if (!match) return false;
+  return match.some(m => {
+    const num = parseFloat(m.replace('/', '').trim());
+    return num === 0;
+  });
+}
+
+/**
+ * Evaluate a full calculator expression and return the result string.
+ */
+export function evaluateExpression(displayExpression: string, currentValue: string): string {
+  const fullExpression = displayExpression + ' ' + currentValue;
+  const evalExpression = toEvalExpression(fullExpression);
+
+  try {
+    if (isDivisionByZero(evalExpression)) {
+      return 'Error: Div/0';
+    }
+    const res = safeEval(evalExpression);
+    return formatResult(res);
+  } catch {
+    return 'Error';
+  }
+}
+
+/**
+ * Process a digit input given the current state.
+ */
+export function processDigitInput(
+  digit: string,
+  currentValue: string,
+  waitingForOperand: boolean
+): string {
+  if (waitingForOperand) {
+    return digit;
+  }
+  if (currentValue === '0') return digit;
+  if (currentValue.length >= 15) return currentValue;
+  return currentValue + digit;
+}
+
+/**
+ * Process a decimal input given the current state.
+ */
+export function processDecimalInput(
+  currentValue: string,
+  waitingForOperand: boolean
+): string {
+  if (waitingForOperand) {
+    return '0.';
+  }
+  if (!currentValue.includes('.')) {
+    return currentValue + '.';
+  }
+  return currentValue;
+}
+
+/**
+ * Process a backspace given the current value.
+ */
+export function processBackspace(currentValue: string): string {
+  if (currentValue.length <= 1) return '0';
+  return currentValue.slice(0, -1);
+}
+
+/**
+ * Process a percent operation on the current value.
+ */
+export function processPercent(currentValue: string): string {
+  const val = parseFloat(currentValue) / 100;
+  return formatResult(val);
+}
+</file>
+
+<file path="calculator-app/src/__tests__/unit/calculatorUtils.test.ts">
+import {
+  formatResult,
+  safeEval,
+  toEvalExpression,
+  getDisplayOperator,
+  isDivisionByZero,
+  evaluateExpression,
+  processDigitInput,
+  processDecimalInput,
+  processBackspace,
+  processPercent,
+} from '@/lib/calculatorUtils';
+
+describe('formatResult', () => {
+  it('should format a simple integer', () => {
+    expect(formatResult(42)).toBe('42');
+  });
+
+  it('should format a decimal number', () => {
+    expect(formatResult(3.14)).toBe('3.14');
+  });
+
+  it('should return "Error" for Infinity', () => {
+    expect(formatResult(Infinity)).toBe('Error');
+  });
+
+  it('should return "Error" for -Infinity', () => {
+    expect(formatResult(-Infinity)).toBe('Error');
+  });
+
+  it('should return "Error" for NaN', () => {
+    expect(formatResult(NaN)).toBe('Error');
+  });
+
+  it('should handle zero', () => {
+    expect(formatResult(0)).toBe('0');
+  });
+
+  it('should handle negative numbers', () => {
+    expect(formatResult(-7)).toBe('-7');
+  });
+
+  it('should limit precision to 12 significant digits', () => {
+    const result = formatResult(1 / 3);
+    // 1/3 = 0.
